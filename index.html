@@ -232,6 +232,7 @@ button.chip{font:inherit;font-size:11.5px}
       <input type="file" id="file" accept="image/*" hidden>
       <span class="inl">Countdown <select id="countdown"><option value="0">None</option><option value="3" selected>3 s</option><option value="5">5 s</option></select></span>
       <span class="inl"><label class="chk" style="margin:0"><input type="checkbox" id="mirror"> Mirror preview</label></span>
+      <button class="btn" id="btnFlip" style="display:none" title="Switch between the front (selfie) and back camera">🔄 Front / back camera</button>
       <span class="inl">Camera <select id="camSel"></select></span>
     </div>
   </section>
@@ -381,11 +382,11 @@ async function startCam(){
   if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){chip('chipCam','bad','Camera: not supported in this browser');return;}
   stopCam();chip('chipCam','wait','Camera: starting…');
   try{
-    const id=$('camSel').value;
-    const por=innerHeight>innerWidth&&innerWidth<900;const c={video:{width:{ideal:por?1080:1920},height:{ideal:por?1920:1080},...(id?{deviceId:{exact:id}}:{})},audio:false};
+    const id=S.facingMode?'':$('camSel').value;
+    const por=innerHeight>innerWidth&&innerWidth<900;const c={video:{width:{ideal:por?1080:1920},height:{ideal:por?1920:1080},...(id?{deviceId:{exact:id}}:(S.facingMode?{facingMode:{ideal:S.facingMode}}:{}))},audio:false};
     S.stream=await navigator.mediaDevices.getUserMedia(c);
     S.video.srcObject=S.stream;await S.video.play();
-    await listCams();
+    await listCams();if(window.updFlip)window.updFlip();
     const t=S.stream.getVideoTracks()[0];if(t&&t.getSettings().deviceId)$('camSel').value=t.getSettings().deviceId;
     const st=t.getSettings();
     chip('chipCam','ok',`Camera: ${st.width||S.video.videoWidth}×${st.height||S.video.videoHeight}`);
@@ -395,7 +396,7 @@ async function startCam(){
   }
 }
 function stopCam(){if(S.stream){S.stream.getTracks().forEach(t=>t.stop());S.stream=null;}}
-$('camSel').onchange=()=>startCam();
+$('camSel').onchange=()=>{S.facingMode=null;startCam();};
 
 /* ---------------------------------------------------------------- capture */
 function beep(f,d){try{const a=S.audio||(S.audio=new (window.AudioContext||window.webkitAudioContext)());const o=a.createOscillator(),g=a.createGain();o.frequency.value=f;g.gain.value=.08;o.connect(g);g.connect(a.destination);o.start();o.stop(a.currentTime+d);}catch(e){}}
@@ -1410,6 +1411,14 @@ loadAI();
     addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
   }
 })();
+
+/* ---------------------------------------------------------------- front / back camera */
+window.updFlip=function(){
+  const t=S.stream&&S.stream.getVideoTracks()[0],f=t&&t.getSettings?t.getSettings().facingMode:null;
+  if(f==='user'||f==='environment'){S.facingNow=f;$('mirror').checked=(f==='user');}
+  navigator.mediaDevices.enumerateDevices().then(ds=>{const n=ds.filter(d=>d.kind==='videoinput').length;$('btnFlip').style.display=(n>1||matchMedia('(pointer:coarse)').matches)?'':'none';}).catch(()=>{});
+};
+$('btnFlip').onclick=()=>{S.facingMode=((S.facingMode||S.facingNow)==='environment')?'user':'environment';startCam();};
 </script>
 </body>
 </html>
