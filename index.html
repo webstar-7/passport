@@ -683,7 +683,7 @@ function stage2(){
     pr=new Float32Array(n),pg=new Float32Array(n),pb=new Float32Array(n);
   for(let i=0;i<n;i++){pr[i]=R[i]*inner[i];pg[i]=G[i]*inner[i];pb[i]=B[i]*inner[i];}
   const br=boxBlur(boxBlur(pr,W,H,rr),W,H,rr),bg=boxBlur(boxBlur(pg,W,H,rr),W,H,rr),bb=boxBlur(boxBlur(pb,W,H,rr),W,H,rr);
-  for(let i=0;i<n;i++){const k=Math.max(Math.min(1,(1-a[i])*1.5),Math.min(1,clamp(1-dn[i],0,1)*2.4));
+  if(!S.orig)for(let i=0;i<n;i++){const k=Math.max(Math.min(1,(1-a[i])*1.5),Math.min(1,clamp(1-dn[i],0,1)*2.4));
     if(k>0.001&&bc[i]>.02&&a[i]>0){R[i]=R[i]*(1-k)+br[i]/bc[i]*k;G[i]=G[i]*(1-k)+bg[i]/bc[i]*k;B[i]=B[i]*(1-k)+bb[i]/bc[i]*k;}}
   // exposure statistics from the subject only
   const hist=new Uint32Array(256);let tot=0;
@@ -707,9 +707,9 @@ function stage2(){
     const L=.299*R[i]+.587*G[i]+.114*B[i];R[i]=L+(R[i]-L)*sat;G[i]=L+(G[i]-L)*sat;B[i]=L+(B[i]-L)*sat;}
   if(c.shp>0){const am=c.shp/100*.9,r1=boxBlur(R,W,H,1),g1=boxBlur(G,W,H,1),b1=boxBlur(B,W,H,1);
     for(let i=0;i<n;i++){R[i]+=am*(R[i]-r1[i]);G[i]+=am*(G[i]-g1[i]);B[i]+=am*(B[i]-b1[i]);}}
-  const [br0,bg0,bb0]=hex2rgb(c.bg),cv=S.result||(S.result=document.createElement('canvas'));
+  const orig=!!S.orig,[br0,bg0,bb0]=hex2rgb(c.bg),cv=S.result||(S.result=document.createElement('canvas'));
   cv.width=W;cv.height=H;const x=cv.getContext('2d'),im=x.createImageData(W,H),o=im.data;
-  for(let i=0;i<n;i++){const al=a[i],k=1-al;
+  for(let i=0;i<n;i++){const al=orig?1:a[i],k=1-al;
     o[4*i]=clamp(R[i]*al+br0*k,0,255);o[4*i+1]=clamp(G[i]*al+bg0*k,0,255);o[4*i+2]=clamp(B[i]*al+bb0*k,0,255);o[4*i+3]=255;}
   x.putImageData(im,0,0);
 }
@@ -1393,7 +1393,21 @@ function buildBatchSheet(){
   return cv;
 }
 
-setBg('#ffffff');syncOut();refreshCopies(false);updateSheet();showCount();
+/* ================================================================ background: "Original" (keep the real background) is the default */
+const origBtn=document.createElement('button');
+origBtn.textContent='Original';origBtn.dataset.c='orig';origBtn.title='Keep the real background exactly as photographed (no cut-out, no rough edges)';
+origBtn.style.cssText='width:auto;border-radius:16px;padding:0 12px;height:30px;background:#0d1424;color:#e8ecf3;font-size:12px;font-weight:600';
+origBtn.onclick=()=>setOrig(true);
+swHost.insertBefore(origBtn,swHost.firstChild);
+function setOrig(v){
+  S.orig=!!v;origBtn.classList.toggle('on',S.orig);
+  if(S.orig)[...swHost.querySelectorAll('button')].forEach(b=>{if(b!==origBtn)b.classList.remove('on');});
+  queue(2);
+}
+const _setBgO=setBg;
+setBg=function(c){S.orig=false;origBtn.classList.remove('on');_setBgO(c);};
+
+setBg('#ffffff');setOrig(true);syncOut();refreshCopies(false);updateSheet();showCount();
 updatePrintBtn();
 startCam().then(listCams);
 loadAI();
