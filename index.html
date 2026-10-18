@@ -2,7 +2,16 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0b101b">
+<meta name="description" content="Passport photo studio: take, cut out, frame and print passport photos and batch sheets. Works offline.">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png" type="image/png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Passport Studio">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>Passport Photo Studio</title>
 <style>
 :root{--bg:#0b101b;--panel:#121a2a;--panel2:#18223a;--line:#26324d;--text:#e8ecf3;--mute:#98a3b8;--gold:#d4a017;--goldink:#241a00;--ok:#3ecf8e;--bad:#ff6b6b}
@@ -133,6 +142,66 @@ tr.flag td{background:rgba(255,184,107,.07)}
 #tray .slot.act{border-color:var(--gold);color:var(--text);box-shadow:0 0 0 2px rgba(212,160,23,.3)}
 #tray .slot.ok{cursor:pointer;color:var(--ok)}
 #tray .tot{margin-left:auto;font-size:12.5px;color:var(--gold);font-weight:700}
+
+/* ---------- phones and tablets ---------- */
+#btnInstall{display:none;cursor:pointer;background:var(--gold);color:var(--goldink);border-color:var(--gold);font-weight:700}
+button.chip{font:inherit;font-size:11.5px}
+@media (max-width:900px){
+  html,body{height:auto;min-height:100%}
+  body{display:block;overflow:auto;padding-bottom:calc(var(--barh,0px) + env(safe-area-inset-bottom));-webkit-text-size-adjust:100%}
+  header{height:auto;min-height:46px;flex-wrap:wrap;padding:calc(8px + env(safe-area-inset-top)) 12px 8px;gap:6px 8px;position:sticky;top:0;z-index:20}
+  header h1{font-size:15px}header .by{display:none}header .sp{display:none}
+  .chip{padding:5px 10px}
+  main{display:flex;flex-direction:column;height:auto;padding:8px;gap:10px}
+  #left{display:flex;min-height:0}
+  #stageWrap{flex:none;height:clamp(300px,60vh,640px);min-height:0}
+  #viewTabs button{padding:6px 10px}
+  #actions{gap:8px}
+  #actions .btn{flex:1 1 140px;min-height:44px}
+  #actions #btnCapture{flex:1 1 100%;min-height:52px;font-size:16px}
+  #actions .inl{flex:1 1 45%}
+  #actions .inl select{max-width:none;flex:1;min-width:0}
+  #right{display:block}
+  #cards{overflow:visible;padding-right:0}
+  .card{padding:12px}
+  select,input[type=number],input[type=text],input[type=password],textarea{font-size:16px;min-height:38px}
+  input[type=range]{height:28px}
+  .row{grid-template-columns:86px 1fr 36px;gap:6px}
+  .fld>span{width:84px}
+  .chk{min-height:36px}.chk input{width:20px;height:20px}
+  .sw button{width:38px;height:38px}.sw input[type=color]{width:42px;height:38px}
+  #sheetBox{padding:4px}
+  #bar{position:fixed;left:0;right:0;bottom:0;z-index:30;border-radius:12px 12px 0 0;border-width:1px 0 0;padding:8px 10px calc(8px + env(safe-area-inset-bottom));gap:6px;max-height:42vh;overflow:auto;box-shadow:0 -6px 20px rgba(0,0,0,.45)}
+  #bar .btn{min-height:44px;padding:8px 12px}
+  #btnPrint{min-height:50px}
+  #btnEnd,#btnReprint{min-height:38px}
+  #count:empty{display:none}
+  .ov{padding:8px;align-items:flex-end}
+  .mbox,.mdl,.mbox.wide{width:100%;max-height:94vh;border-radius:14px 14px 10px 10px;padding:14px}
+  .mbtn{flex-wrap:wrap}.mbtn .btn{flex:1 1 120px;min-height:42px}
+  .mdl .mf .btn{min-height:44px}
+  .mbox input[type=number].pc,.mbox input[type=number].pp2{width:80px!important}
+  .ohead{padding:8px 10px;gap:6px}
+  .ohead .btn,.dtabs button{min-height:40px}
+  .dtabs{flex-wrap:wrap;padding:8px 10px 0}
+  .obody,.dbody{padding:10px}
+  .kpis{grid-template-columns:repeat(2,1fr)}
+  .tw{-webkit-overflow-scrolling:touch}
+  #tray .slot{padding:6px 10px 6px 6px}
+  #note{font-size:12.5px}
+}
+@media (max-width:480px){
+  header h1{font-size:14px}
+  #stageWrap{height:clamp(280px,58vh,560px)}
+  #actions .inl{flex:1 1 100%}
+}
+@media (max-height:480px) and (orientation:landscape){
+  #stageWrap{height:78vh}
+  #bar{position:static;max-height:none;border-radius:10px;border-width:1px}
+  body{padding-bottom:0}
+}
+@media (hover:none){#btnCapture{-webkit-tap-highlight-color:transparent}}
+@media (display-mode:standalone){body{overscroll-behavior-y:none}}
 </style>
 <style id="printStyle"></style>
 </head>
@@ -144,6 +213,7 @@ tr.flag td{background:rgba(255,184,107,.07)}
   <span class="chip wait" id="chipAI">AI cut-out: checking…</span>
   <button class="chip" id="btnWorker" style="display:none;cursor:pointer;background:none;color:#e8ecf3">On duty: nobody</button>
   <button class="chip" id="btnDash" style="display:none;cursor:pointer;color:#d4a017;border-color:#5a4710;background:none">Owner dashboard</button>
+  <button class="chip" id="btnInstall">Install app</button>
   <button class="chip" id="btnRole" style="cursor:pointer;background:none">Worker mode</button>
 </header>
 <main>
@@ -202,7 +272,7 @@ tr.flag td{background:rgba(255,184,107,.07)}
         <div class="fld"><span>Paper</span><select id="paper"></select></div>
         <div class="fld"><span>Copies</span><select id="copies"></select></div>
         <div id="batchBox" style="margin:6px 0;padding:8px;border:1px dashed var(--line);border-radius:8px">
-          <label class="chk" style="margin:0"><input type="checkbox" id="batchOn"> <b>Batch mode</b>: fill the sheet with several customers</label>
+          <label class="chk" style="margin:0"><input type="checkbox" id="batchOn"> <span><b>Batch mode</b>: fill the sheet with several customers</span></label>
           <div class="fld"><span>Each gets</span><select id="bEach"></select></div>
           <div class="fld"><span>People</span><select id="bPeople"></select></div>
           <label class="chk" style="margin:2px 0"><input type="checkbox" id="bNum" checked> Print a small number above each person's photos</label>
@@ -312,7 +382,7 @@ async function startCam(){
   stopCam();chip('chipCam','wait','Camera: starting…');
   try{
     const id=$('camSel').value;
-    const c={video:{width:{ideal:1920},height:{ideal:1080},...(id?{deviceId:{exact:id}}:{})},audio:false};
+    const por=innerHeight>innerWidth&&innerWidth<900;const c={video:{width:{ideal:por?1080:1920},height:{ideal:por?1920:1080},...(id?{deviceId:{exact:id}}:{})},audio:false};
     S.stream=await navigator.mediaDevices.getUserMedia(c);
     S.video.srcObject=S.stream;await S.video.play();
     await listCams();
@@ -1322,6 +1392,24 @@ setBg('#ffffff');syncOut();refreshCopies(false);updateSheet();showCount();
 updatePrintBtn();
 startCam().then(listCams);
 loadAI();
+
+/* ---------------------------------------------------------------- app install + offline */
+(function(){
+  const bar=$('bar');
+  function setBarH(){const fixed=getComputedStyle(bar).position==='fixed';document.documentElement.style.setProperty('--barh',fixed?bar.offsetHeight+'px':'0px');}
+  if(window.ResizeObserver)new ResizeObserver(setBarH).observe(bar);addEventListener('resize',setBarH);setBarH();
+  let dip=null;const btn=$('btnInstall');
+  const standalone=()=>matchMedia('(display-mode: standalone)').matches||navigator.standalone===true;
+  addEventListener('beforeinstallprompt',e=>{e.preventDefault();dip=e;if(!standalone())btn.style.display='';});
+  addEventListener('appinstalled',()=>{btn.style.display='none';dip=null;});
+  btn.onclick=async()=>{if(dip){dip.prompt();try{await dip.userChoice;}catch(e){}dip=null;btn.style.display='none';}};
+  const ios=/iphone|ipad|ipod/i.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
+  if(ios&&!standalone()){btn.style.display='';btn.onclick=()=>ask('Install on iPhone / iPad','<p>In Safari, tap the <b>Share</b> button, then <b>Add to Home Screen</b>.</p>',[{l:'OK',cls:'pri'}]);}
+  if(matchMedia('(pointer:coarse)').matches){const cb=$('btnCapture');let busy=false;const fix=()=>{if(busy)return;busy=true;const t=cb.textContent,n=t.replace(/\s*\(Space\)/,'');if(n!==t)cb.textContent=n;busy=false;};new MutationObserver(fix).observe(cb,{childList:true,characterData:true,subtree:true});fix();}
+  if('serviceWorker' in navigator&&/^https?:$/.test(location.protocol)){
+    addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
+  }
+})();
 </script>
 </body>
 </html>
