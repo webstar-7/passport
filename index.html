@@ -209,7 +209,7 @@ button.chip{font:inherit;font-size:11.5px}
 <header>
   <h1>Passport Photo <b>Studio</b></h1><span class="by">by NYANSATEK Systems</span>
   <span class="sp"></span>
-  <span class="chip wait" id="chipCam">Camera: starting…</span>
+  <span class="chip wait" id="chipCam" style="cursor:pointer" title="Click to restart the camera">Camera: starting…</span>
   <span class="chip wait" id="chipAI">AI cut-out: checking…</span>
   <button class="chip" id="btnWorker" style="display:none;cursor:pointer;background:none;color:#e8ecf3">On duty: nobody</button>
   <button class="chip" id="btnDash" style="display:none;cursor:pointer;color:#d4a017;border-color:#5a4710;background:none">Owner dashboard</button>
@@ -384,15 +384,19 @@ async function startCam(){
   try{
     const id=S.facingMode?'':$('camSel').value;
     const por=innerHeight>innerWidth&&innerWidth<900;const c={video:{width:{ideal:por?1080:1920},height:{ideal:por?1920:1080},...(id?{deviceId:{exact:id}}:(S.facingMode?{facingMode:{ideal:S.facingMode}}:{}))},audio:false};
-    S.stream=await navigator.mediaDevices.getUserMedia(c);
+    try{S.stream=await navigator.mediaDevices.getUserMedia(c);}catch(e0){if(e0&&/Overconstrained|NotReadable|Abort|TypeError/.test(e0.name)){S.stream=await navigator.mediaDevices.getUserMedia({video:id?{deviceId:{exact:id}}:true,audio:false});}else throw e0;}
     S.video.srcObject=S.stream;await S.video.play();
     await listCams();if(window.updFlip)window.updFlip();
     const t=S.stream.getVideoTracks()[0];if(t&&t.getSettings().deviceId)$('camSel').value=t.getSettings().deviceId;
     const st=t.getSettings();
     chip('chipCam','ok',`Camera: ${st.width||S.video.videoWidth}×${st.height||S.video.videoHeight}`);
   }catch(e){
-    console.warn(e);chip('chipCam','bad','Camera: not available');
-    note('No camera found or permission was blocked. Click the camera icon in the address bar to allow it, or use "Use a photo from file…".',true);
+    console.warn(e);const nm=(e&&e.name)||'';chip('chipCam','bad','Camera: not available (click to retry)');
+    let msg='The camera could not start ('+(nm||'unknown error')+'). You can still use "Use a photo from file…".';
+    if(/NotAllowed|Security/.test(nm))msg='The browser is blocking the camera for this site. Click the padlock or camera icon at the left of the address bar, set Camera to Allow, then click the red camera chip above. (In a private/Incognito window the permission is forgotten each time.) Also check Windows Settings > Privacy & security > Camera.';
+    else if(/NotReadable|Abort/.test(nm))msg='The camera is busy: another app or browser tab is using it (Zoom, Teams, Meet, Windows Camera, another tab of this app). Close it, then click the red camera chip above to retry.';
+    else if(/NotFound|Overconstrained/.test(nm))msg='No working camera was found. Plug it in or choose another one in the Camera list, then click the red camera chip above to retry.';
+    note(msg,true);
   }
 }
 function stopCam(){if(S.stream){S.stream.getTracks().forEach(t=>t.stop());S.stream=null;}}
@@ -1418,6 +1422,7 @@ window.updFlip=function(){
   if(f==='user'||f==='environment'){S.facingNow=f;$('mirror').checked=(f==='user');}
   navigator.mediaDevices.enumerateDevices().then(ds=>{const n=ds.filter(d=>d.kind==='videoinput').length;$('btnFlip').style.display=(n>1||matchMedia('(pointer:coarse)').matches)?'':'none';}).catch(()=>{});
 };
+$('chipCam').onclick=()=>{if(/not available|not supported|starting/.test($('chipCam').textContent))startCam();};
 $('btnFlip').onclick=()=>{S.facingMode=((S.facingMode||S.facingNow)==='environment')?'user':'environment';startCam();};
 </script>
 </body>
