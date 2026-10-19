@@ -1532,7 +1532,7 @@ async function openLib(){
     <label class="chk"><input type="checkbox" id="lCut" checked> Thin cutting guides</label>
     <label class="chk"><input type="checkbox" id="lLab" checked> Small name / number above each person's photos</label>
     <p class="tiny" id="lInfo"></p><div id="lPrev"></div></div></div>
-    <div class="mbtn"><button class="btn" id="lDel" style="margin-right:auto">Delete selected</button><button class="btn" id="lSave">Save sheets (JPG)</button><button class="btn pri" id="lPrint">Print selected</button><button class="btn" id="lClose">Close</button></div>`;
+    <div class="mbtn"><button class="btn" id="lDel">Delete selected</button><button class="btn" id="lExp" title="Save everything to one file you can carry to another laptop">Back up / move…</button><button class="btn" id="lImp" style="margin-right:auto" title="Load a backup file made on another laptop">Restore…</button><input type="file" id="lImpF" accept=".json,.ppsbackup" hidden><button class="btn" id="lSave">Save sheets (JPG)</button><button class="btn pri" id="lPrint">Print selected</button><button class="btn" id="lClose">Close</button></div>`;
   ov.appendChild(box);document.body.appendChild(ov);
   const q=id=>box.querySelector('#'+id),pSel=q('lPaper');
   PAPERS.forEach((p,i)=>{const o=document.createElement('option');o.value=i;o.textContent=p[0];pSel.appendChild(o);});
@@ -1595,6 +1595,32 @@ async function openLib(){
     const P=await pages();if(!P.placed)return;if(CFG.sales)logAdd('save',{photo:'library',kind:'library sheets'});
     const cvs=render(P.pg,P.paper,q('lCut').checked,q('lLab').checked),st=stamp();
     cvs.forEach((c,i)=>setTimeout(()=>saveCanvas(c,'PassportSheet_'+st+'_'+(i+1)+'.jpg'),i*700));
+  };
+
+  /* ---- back up / move to another laptop: one file with every saved photo + settings (+ sales record) */
+  const b64=b=>new Promise(r=>{const f=new FileReader();f.onload=()=>r(f.result);f.readAsDataURL(b);});
+  q('lExp').onclick=async()=>{
+    const all=await libAll(),ph=[];
+    for(const r of all)ph.push({id:r.id,t:r.t,pw:r.pw,ph:r.ph,name:r.name,pid:r.pid,img:await b64(r.blob)});
+    const data={app:'pps-backup',v:1,made:new Date().toISOString(),photos:ph,cfg:LS.get(CFGK,null),log:LS.get(LOGK,null),head:LS.get(HEADK,null)};
+    const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(data)],{type:'application/json'}));
+    a.download='PassportBackup_'+stamp()+'.ppsbackup';document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},1500);
+    alert('Backup saved ('+ph.length+' photos). Copy this file to a flash drive / phone / cloud, then use "Restore…" on the other laptop.');
+  };
+  q('lImp').onclick=()=>q('lImpF').click();
+  q('lImpF').onchange=async()=>{
+    const f=q('lImpF').files[0];if(!f)return;
+    try{
+      const d=JSON.parse(await f.text());if(d.app!=='pps-backup')throw 0;
+      let n=0;
+      for(const p of d.photos||[]){const blob=await (await fetch(p.img)).blob();await tx('readwrite',s=>s.put({id:p.id,t:p.t,pw:p.pw,ph:p.ph,name:p.name||'',pid:p.pid||'',blob}));n++;}
+      let extra='';
+      if(d.cfg&&!LS.get(CFGK,null)){LS.set(CFGK,d.cfg);extra+=' Settings restored.';}
+      if(d.log&&!(LS.get(LOGK,[])||[]).length){LS.set(LOGK,d.log);if(d.head)LS.set(HEADK,d.head);extra+=' Sales record restored.';}
+      alert(n+' photos restored.'+extra+(extra?' Reload the page to apply the settings.':''));
+      recs=(await libAll()).sort((a,b)=>b.t-a.t);cards();later();refreshCount();
+    }catch(e){alert('That file is not a valid backup.');}
+    q('lImpF').value='';
   };
   cards();preview();
 }
