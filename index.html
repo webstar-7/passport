@@ -1220,7 +1220,7 @@ async function openSettings(){
   const prRow=(c,p)=>`<div class="prow"><input type="number" class="pc" min="1" max="60" value="${c}" style="width:70px"> copies = ${esc(CFG.currency)} <input type="number" class="pp2" min="0" step="0.5" value="${p}" style="width:90px"> <button class="lnk rm">remove</button></div>`;
   let boxRef=null;
   const p=ask('Settings',body,[{l:'Cancel'},{l:'Save settings',cls:'pri',fn:b=>{
-    const copies=[...b.querySelectorAll('.prow')].map(r=>({copies:Math.round(+r.querySelector('.pc').value),price:+r.querySelector('.pp2').value}));
+    const copies=[...b.querySelectorAll('#sPr .prow')].map(r=>({copies:Math.round(+r.querySelector('.pc').value),price:+r.querySelector('.pp2').value}));
     if(!copies.length||copies.some(x=>!(x.copies>0)||!(x.price>=0))||new Set(copies.map(x=>x.copies)).size!==copies.length){b.querySelector('#serr').textContent='Check the prices: each row needs copies and a price, and no two rows can have the same copies.';return false;}
     const on=b.querySelector('#sSales').checked;
     const bp={2:+b.querySelector('#sB2').value||0,4:+b.querySelector('#sB4').value||0,6:+b.querySelector('#sB6').value||0};return {bp,on,cur:b.querySelector('#sCur').value.trim()||'GH₵',copies:copies.sort((a,c)=>a.copies-c.copies),workers:b.querySelector('#sWk').value.split('\n').map(s=>s.trim()).filter(Boolean),wa:b.querySelector('#sWa').value.trim(),save:b.querySelector('#sSave').checked,cp:b.querySelector('#sCp').checked,th:Math.max(1,+b.querySelector('#sTh').value||30)};}}],{wide:true});
