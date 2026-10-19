@@ -1477,6 +1477,7 @@ async function saveCurrent(quiet){
     let old=null;if(S.libId)try{old=await tx('readonly',s=>s.get(id));}catch(e){}
     await tx('readwrite',s=>s.put({id,t:old?old.t:Date.now(),blob,pw,ph,name:old?old.name:'',pid:S.photoId||''}));
     S.libId=id;await refreshCount();
+    if(signedIn()){tx('readonly',s=>s.get(id)).then(r=>r&&cloudPush(r)).catch(()=>{cloud.status='Offline: will sync later.';});}
     if(!quiet)note('Saved to the photo library.',false);
     return true;
   }catch(e){note('Could not save to the library (browser storage blocked or full).',true);return false;}
@@ -1488,6 +1489,91 @@ const _acc=acceptSlot;acceptSlot=function(){if(S.result&&$('libAuto').checked)sa
 const _sf=setFrame;setFrame=async function(c){S.libId=null;return _sf(c);};
 const _eo=enableOut;enableOut=function(on){_eo(on);$('btnLibSave').disabled=!on;};
 refreshCount();
+
+/* ---- cloud sync (Supabase). Local library stays the working copy; this copies it up/down whenever there is internet. */
+const SB_URL='https://kqwqbohoeltlbwcopeug.supabase.co',SB_KEY='sb_publishable_T6oCd3aRO0OPheQXEkmvRA_nvIhEPcv',BUCKET='passport-photos',RETAIN_DAYS=30,SK='pps_sb',DK='pps_cdel';
+const jget=(k,d)=>{try{const v=localStorage.getItem(k);return v?JSON.parse(v):d;}catch(e){return d;}},jset=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v));}catch(e){}};
+const cloud={status:'',busy:false};
+const signedIn=()=>!!jget(SK,null);
+async function sbToken(){
+  let ss=jget(SK,null);if(!ss)throw new Error('not signed in');
+  if(ss.exp-60>Date.now()/1000)return ss.access;
+  const r=await fetch(SB_URL+'/auth/v1/token?grant_type=refresh_token',{method:'POST',headers:{apikey:SB_KEY,'Content-Type':'application/json'},body:JSON.stringify({refresh_token:ss.refresh})});
+  if(!r.ok){if(r.status>=400&&r.status<500){localStorage.removeItem(SK);}throw new Error('session expired');}
+  const j=await r.json();ss={access:j.access_token,refresh:j.refresh_token,exp:Math.floor(Date.now()/1000)+(j.expires_in||3600),email:ss.email};jset(SK,ss);return ss.access;
+}
+async function sbFetch(path,opt){opt=opt||{};const t=await sbToken();opt.headers=Object.assign({apikey:SB_KEY,Authorization:'Bearer '+t},opt.headers||{});return fetch(SB_URL+path,opt);}
+async function sbSignIn(email,pw){
+  const r=await fetch(SB_URL+'/auth/v1/token?grant_type=password',{method:'POST',headers:{apikey:SB_KEY,'Content-Type':'application/json'},body:JSON.stringify({email,password:pw})});
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok)throw new Error(j.error_description||j.msg||'Sign-in failed');
+  jset(SK,{access:j.access_token,refresh:j.refresh_token,exp:Math.floor(Date.now()/1000)+(j.expires_in||3600),email});
+}
+const okr=async(r,what)=>{if(!r.ok){const t=await r.text().catch(()=>'');throw new Error(what+' '+r.status+' '+t.slice(0,120));}return r;};
+async function cloudPush(rec){
+  await okr(await sbFetch('/storage/v1/object/'+BUCKET+'/'+rec.id+'.jpg',{method:'POST',headers:{'Content-Type':'image/jpeg','x-upsert':'true'},body:rec.blob}),'upload');
+  await okr(await sbFetch('/rest/v1/pp_photos?on_conflict=id',{method:'POST',headers:{'Content-Type':'application/json',Prefer:'resolution=merge-duplicates,return=minimal'},body:JSON.stringify({id:rec.id,taken_at:new Date(rec.t).toISOString(),pw:rec.pw,ph:rec.ph,name:rec.name||'',pid:rec.pid||'',path:rec.id+'.jpg'})}),'save');
+}
+async function cloudDelete(id){
+  await okr(await sbFetch('/storage/v1/object/'+BUCKET,{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({prefixes:[id+'.jpg']})}),'remove file');
+  await okr(await sbFetch('/rest/v1/pp_photos?id=eq.'+encodeURIComponent(id),{method:'DELETE'}),'remove row');
+}
+async function cloudForget(id){ // local delete: remove from cloud now, or remember to do it when online
+  if(!signedIn())return;
+  try{await cloudDelete(id);}catch(e){const d=jget(DK,[]);if(!d.includes(id)){d.push(id);jset(DK,d);}}
+}
+async function cloudSync(){
+  if(!signedIn()||cloud.busy)return;
+  if(navigator.onLine===false){cloud.status='Offline: will sync when the internet is back.';cloudUI();return;}
+  cloud.busy=true;cloud.status='Syncing…';cloudUI();
+  try{
+    let dels=jget(DK,[]);const left=[];
+    for(const id of dels){try{await cloudDelete(id);}catch(e){left.push(id);}}jset(DK,left);
+    const cut=Date.now()-RETAIN_DAYS*86400000;
+    const rr=await okr(await sbFetch('/rest/v1/pp_photos?select=id,taken_at,pw,ph,name,pid&order=taken_at.desc&limit=2000'),'list');
+    let remote=await rr.json();
+    for(const m of remote.filter(m=>new Date(m.taken_at).getTime()<cut)){try{await cloudDelete(m.id);}catch(e){}}
+    remote=remote.filter(m=>new Date(m.taken_at).getTime()>=cut);
+    const local=await libAll(),rids=new Set(remote.map(m=>m.id)),lids=new Set(local.map(r=>r.id));
+    let up=0,down=0;
+    for(const r of local){if(rids.has(r.id)||r.t<cut||left.includes(r.id))continue;await cloudPush(r);up++;}
+    for(const m of remote){
+      if(lids.has(m.id)||left.includes(m.id))continue;
+      const f=await okr(await sbFetch('/storage/v1/object/authenticated/'+BUCKET+'/'+m.id+'.jpg'),'download');
+      const fb=await f.blob();
+      await tx('readwrite',s=>s.put({id:m.id,t:new Date(m.taken_at).getTime(),pw:+m.pw,ph:+m.ph,name:m.name||'',pid:m.pid||'',blob:fb}));down++;}
+    // settings + sales record: back up to the cloud; restore on a laptop that has none
+    const st=[['cfg',localStorage.getItem(CFGK_)],['log',localStorage.getItem(LOGK_)],['head',localStorage.getItem(HEADK_)]];
+    const had=localStorage.getItem(CFGK_);
+    if(had){for(const [k,v] of st){if(v)await okr(await sbFetch('/rest/v1/pp_state?on_conflict=key',{method:'POST',headers:{'Content-Type':'application/json',Prefer:'resolution=merge-duplicates,return=minimal'},body:JSON.stringify({key:k,value:JSON.parse(v),updated_at:new Date().toISOString()})}),'state');}}
+    else{const sr=await okr(await sbFetch('/rest/v1/pp_state?select=key,value'),'state'),rows=await sr.json();
+      if(rows.length){rows.forEach(x=>localStorage.setItem({cfg:CFGK_,log:LOGK_,head:HEADK_}[x.key],JSON.stringify(x.value)));cloud.status='Settings restored from the cloud: reload the page.';}}
+    cloud.last=new Date();cloud.status=cloud.status.startsWith('Settings')?cloud.status:`Synced ${cloud.last.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}${up||down?` (↑${up} ↓${down})`:''}.`;
+    await refreshCount();if(cloud.onSynced)cloud.onSynced();
+  }catch(e){cloud.status=(navigator.onLine===false?'Offline: will sync later.':'Sync problem: '+e.message);}
+  cloud.busy=false;cloudUI();
+}
+const CFGK_='pps_cfg_v1',LOGK_='pps_log_v1',HEADK_='pps_head_v1';
+function cloudUI(){const el=document.getElementById('lCloud');if(el)el.innerHTML=cloudHtml();wireCloud();}
+function cloudHtml(){
+  const ss=jget(SK,null),pend=jget(DK,[]).length;
+  return ss?`<b>Cloud:</b> ${esc(ss.email)} · ${esc(cloud.status||'signed in')}${pend?` (${pend} deletion(s) waiting)`:''} <button class="btn" id="cSync">Sync now</button> <button class="btn" id="cOut">Sign out</button>`
+    :`<b>Cloud:</b> not signed in (photos are only on this laptop) <button class="btn pri" id="cIn">Sign in…</button>`;
+}
+function wireCloud(){
+  const g=id=>document.getElementById(id);
+  if(g('cSync'))g('cSync').onclick=()=>cloudSync();
+  if(g('cOut'))g('cOut').onclick=()=>{localStorage.removeItem(SK);cloud.status='';cloudUI();};
+  if(g('cIn'))g('cIn').onclick=async()=>{
+    const r=await ask('Cloud sign-in','<p>Sign in with the studio login to keep photos safe online and open them on any laptop.</p><input type="email" id="ce" placeholder="Email" style="width:100%;margin-bottom:8px"><input type="password" id="cp" placeholder="Password" style="width:100%"><p id="cerr" class="bad"></p>',
+      [{l:'Cancel'},{l:'Sign in',cls:'pri',fn:b=>{const e=b.querySelector('#ce').value.trim(),p=b.querySelector('#cp').value;if(!e||!p)return false;return {e,p};}}]);
+    if(!r||!r.e)return;
+    try{await sbSignIn(r.e,r.p);cloud.status='';cloudSync();}catch(e){alert(e.message);}
+  };
+}
+addEventListener('online',()=>cloudSync());
+setInterval(()=>{if(signedIn())cloudSync();},120000);
+setTimeout(()=>cloudSync(),3000);
 
 /* ---- packing: pieces flow left to right, row by row, page by page */
 function pack(pieces,paper){
@@ -1524,7 +1610,7 @@ async function openLib(){
   let defCopies=4;try{defCopies=+localStorage.getItem(CK)||4;}catch(e){}
   const ov=document.createElement('div');ov.className='ov';
   const box=document.createElement('div');box.className='mbox lib';
-  box.innerHTML=`<h2>Photo library</h2><div class="mbody"><div style="display:flex;flex-direction:column;min-height:0">
+  box.innerHTML=`<h2>Photo library</h2><div id="lCloud" class="tiny" style="margin:-4px 0 8px"></div><div class="mbody"><div style="display:flex;flex-direction:column;min-height:0">
     <div class="tb"><button class="btn" id="lAll">Select all</button><button class="btn" id="lNone">Clear</button><span>Copies of each:
     <select id="lCopies">${[1,2,3,4,6,8,9,12].map(n=>`<option ${n===defCopies?'selected':''}>${n}</option>`).join('')}</select> <button class="btn" id="lApply">Apply to selected</button></span><span id="lCnt" style="opacity:.7"></span></div>
     <div class="grid" id="lGrid"></div></div>
@@ -1537,7 +1623,7 @@ async function openLib(){
   const q=id=>box.querySelector('#'+id),pSel=q('lPaper');
   PAPERS.forEach((p,i)=>{const o=document.createElement('option');o.value=i;o.textContent=p[0];pSel.appendChild(o);});
   pSel.value=PAPERS.findIndex(p=>p[0].startsWith('A4'));
-  const close=()=>{Object.values(urls).forEach(u=>URL.revokeObjectURL(u));ov.remove();refreshCount();};
+  const close=()=>{cloud.onSynced=null;Object.values(urls).forEach(u=>URL.revokeObjectURL(u));ov.remove();refreshCount();};
   q('lClose').onclick=close;
   const fmt=t=>{const d=new Date(t),p=n=>String(n).padStart(2,'0');return p(d.getDate())+'/'+p(d.getMonth()+1)+' '+p(d.getHours())+':'+p(d.getMinutes());};
   let tm=null;const later=()=>{clearTimeout(tm);tm=setTimeout(preview,120);};
@@ -1551,9 +1637,9 @@ async function openLib(){
       c.querySelector('img').src=urls[r.id];
       c.querySelector('img').onclick=()=>{if(sel.has(r.id))sel.delete(r.id);else sel.set(r.id,+q('lCopies').value);cards();later();};
       const ni=c.querySelector('input');ni.value=r.name||'';
-      ni.oninput=()=>{r.name=ni.value;tx('readwrite',s=>s.put(r)).catch(()=>{});later();};
+      ni.oninput=()=>{r.name=ni.value;tx('readwrite',s=>s.put(r)).catch(()=>{});clearTimeout(r._nt);r._nt=setTimeout(()=>{if(signedIn())cloudPush(r).catch(()=>{});},1200);later();};
       const cs=c.querySelector('select');if(cs)cs.onchange=()=>{sel.set(r.id,+cs.value);later();};
-      c.querySelector('.x').onclick=async e=>{e.stopPropagation();if(!confirm('Delete this saved photo?'))return;await tx('readwrite',s=>s.delete(r.id));recs=recs.filter(x=>x!==r);sel.delete(r.id);cards();later();};
+      c.querySelector('.x').onclick=async e=>{e.stopPropagation();if(!confirm('Delete this saved photo?'))return;await tx('readwrite',s=>s.delete(r.id));cloudForget(r.id);recs=recs.filter(x=>x!==r);sel.delete(r.id);cards();later();};
       g.appendChild(c);}
     q('lCnt').textContent=recs.length+' saved · '+sel.size+' selected';
   }
@@ -1562,7 +1648,7 @@ async function openLib(){
   q('lApply').onclick=()=>{const n=+q('lCopies').value;sel.forEach((v,k)=>sel.set(k,n));try{localStorage.setItem(CK,n);}catch(e){}cards();later();};
   q('lCopies').onchange=()=>{try{localStorage.setItem(CK,q('lCopies').value);}catch(e){}};
   q('lPaper').onchange=q('lCut').onchange=q('lLab').onchange=later;
-  q('lDel').onclick=async()=>{if(!sel.size||!confirm('Delete the '+sel.size+' selected photo(s) from the library?'))return;for(const id of sel.keys())await tx('readwrite',s=>s.delete(id));recs=recs.filter(r=>!sel.has(r.id));sel.clear();cards();later();};
+  q('lDel').onclick=async()=>{if(!sel.size||!confirm('Delete the '+sel.size+' selected photo(s) from the library?'))return;for(const id of sel.keys()){await tx('readwrite',s=>s.delete(id));cloudForget(id);}recs=recs.filter(r=>!sel.has(r.id));sel.clear();cards();later();};
   async function pages(){
     const order=recs.filter(r=>sel.has(r.id)).sort((a,b)=>a.pw-b.pw||a.ph-b.ph||a.t-b.t),pieces=[];
     for(const r of order){
@@ -1622,6 +1708,7 @@ async function openLib(){
     }catch(e){alert('That file is not a valid backup.');}
     q('lImpF').value='';
   };
+  cloudUI();cloud.onSynced=async()=>{if(!document.body.contains(ov))return;recs=(await libAll()).sort((a,b)=>b.t-a.t);cards();later();};cloudSync();
   cards();preview();
 }
 $('btnLib').onclick=openLib;
