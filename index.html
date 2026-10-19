@@ -229,6 +229,7 @@ button.chip{font:inherit;font-size:11.5px}
   <span class="chip wait" id="chipAI">AI cut-out: checking…</span>
   <button class="chip" id="btnWorker" style="display:none;cursor:pointer;background:none;color:#e8ecf3">On duty: nobody</button>
   <button class="chip" id="btnDash" style="display:none;cursor:pointer;color:#d4a017;border-color:#5a4710;background:none">Owner dashboard</button>
+  <button class="chip" id="chipCloud" style="cursor:pointer;background:none;color:#e8ecf3" title="Sign in to keep your work in the cloud and continue on any laptop">Cloud: sign in</button>
   <button class="chip" id="btnInstall">Install app</button>
   <button class="chip" id="btnRole" style="cursor:pointer;background:none">Worker mode</button>
 </header>
@@ -1471,9 +1472,10 @@ $('libAuto').onchange=()=>{try{localStorage.setItem(AK,$('libAuto').checked?'1':
 async function refreshCount(){const n=(await libAll()).length;$('btnLib').textContent='Photo library ('+n+')…';return n;}
 async function saveCurrent(quiet){
   const cv=S.result;if(!cv)return false;
+  if(!S.libId)S.libId='p'+Date.now().toString(36)+Math.random().toString(36).slice(2,5);
   const blob=await new Promise(r=>cv.toBlob(r,'image/jpeg',.95)); // snapshot taken synchronously above the first await
   try{
-    const [nm,pw,ph]=currentPhotoSize(),id=S.libId||('p'+Date.now().toString(36)+Math.random().toString(36).slice(2,5));
+    const [nm,pw,ph]=currentPhotoSize(),id=S.libId;
     let old=null;if(S.libId)try{old=await tx('readonly',s=>s.get(id));}catch(e){}
     await tx('readwrite',s=>s.put({id,t:old?old.t:Date.now(),blob,pw,ph,name:old?old.name:'',pid:S.photoId||''}));
     S.libId=id;await refreshCount();
@@ -1542,35 +1544,107 @@ async function cloudSync(){
       const f=await okr(await sbFetch('/storage/v1/object/authenticated/'+BUCKET+'/'+m.id+'.jpg'),'download');
       const fb=await f.blob();
       await tx('readwrite',s=>s.put({id:m.id,t:new Date(m.taken_at).getTime(),pw:+m.pw,ph:+m.ph,name:m.name||'',pid:m.pid||'',blob:fb}));down++;}
-    // settings + sales record: back up to the cloud; restore on a laptop that has none
-    const st=[['cfg',localStorage.getItem(CFGK_)],['log',localStorage.getItem(LOGK_)],['head',localStorage.getItem(HEADK_)]];
-    const had=localStorage.getItem(CFGK_);
-    if(had){for(const [k,v] of st){if(v)await okr(await sbFetch('/rest/v1/pp_state?on_conflict=key',{method:'POST',headers:{'Content-Type':'application/json',Prefer:'resolution=merge-duplicates,return=minimal'},body:JSON.stringify({key:k,value:JSON.parse(v),updated_at:new Date().toISOString()})}),'state');}}
-    else{const sr=await okr(await sbFetch('/rest/v1/pp_state?select=key,value'),'state'),rows=await sr.json();
-      if(rows.length){rows.forEach(x=>localStorage.setItem({cfg:CFGK_,log:LOGK_,head:HEADK_}[x.key],JSON.stringify(x.value)));cloud.status='Settings restored from the cloud: reload the page.';}}
+    // ---- where-I-left-off state: settings, sales record, and the work in progress (size, paper, batch)
+    const sr=await okr(await sbFetch('/rest/v1/pp_state?select=key,value'),'state'),rows=await sr.json();
+    const by={};rows.forEach(x=>by[x.key]=x.value);const rrev=(by.rev&&by.rev.n)||0;
+    const sy=jget(SYNCK,{rev:0,sig:''}),changed=sy.rev>0?localSig()!==sy.sig:hasLocalData(),idle=!S.result&&!batchAny();
+    if(rrev>sy.rev){
+      let take=!changed;
+      if(changed&&sy.rev===0&&hasLocalData())take=confirm('This laptop already has its own settings/sales record, and the cloud has work from another laptop.\n\nOK = continue from the other laptop (replaces this one).\nCancel = keep this laptop\'s and overwrite the cloud.');
+      else if(changed&&sy.rev>0)cloud.warn='The other laptop changed the sales record too. This laptop\'s version was kept. Use one till laptop at a time.';
+      if(take){
+        if(!idle){cloud.status='Newer work from another laptop is waiting: finish or discard the photo in progress, then press Sync now.';cloud.busy=false;cloudUI();return;}
+        ['cfg','log','head'].forEach(k=>{if(by[k]!=null)localStorage.setItem(LSMAP[k],JSON.stringify(by[k]));else localStorage.removeItem(LSMAP[k]);});
+        if(by.work)jset(WK,by.work);
+        jset(SYNCK,{rev:rrev,sig:localSig()});
+        cloud.status='Loading the work from the other laptop…';cloudUI();setTimeout(()=>location.reload(),400);cloud.busy=false;return;
+      }
+    }
+    await pushState(false);
     cloud.last=new Date();cloud.status=cloud.status.startsWith('Settings')?cloud.status:`Synced ${cloud.last.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}${up||down?` (↑${up} ↓${down})`:''}.`;
     await refreshCount();if(cloud.onSynced)cloud.onSynced();
   }catch(e){cloud.status=(navigator.onLine===false?'Offline: will sync later.':'Sync problem: '+e.message);}
   cloud.busy=false;cloudUI();
 }
+
+const SYNCK='pps_syncv',WK='pps_workpending',LSMAP={cfg:'pps_cfg_v1',log:'pps_log_v1',head:'pps_head_v1'};
+const localSig=()=>(localStorage.getItem('pps_cfg_v1')||'')+'|'+(localStorage.getItem('pps_head_v1')||'');
+const hasLocalData=()=>{try{return (JSON.parse(localStorage.getItem('pps_log_v1')||'[]')||[]).length>0;}catch(e){return false;}};
+function workSnap(){
+  const B=S.batch;
+  return {psize:$('psize').value,paper:$('paper').value,cw:$('cw').value,ch:$('ch').value,copies:$('copies').value,batchOn:batchOn(),bPeople:$('bPeople').value,bEach:$('bEach').value,
+    slots:B&&B.libIds?B.libIds.slice(0,B.n).map((id,i)=>B.slots[i]?id:null):[],bn:B?B.n:0,closed:!!(B&&B.closed)};
+}
+let lastWork='';
+async function pushState(onlyIfChanged){
+  if(!signedIn())return;
+  const sy=jget(SYNCK,{rev:0,sig:''}),w=JSON.stringify(workSnap()),sig=localSig();
+  if(onlyIfChanged&&w===lastWork&&sig===sy.sig)return;
+  const rv=await okr(await sbFetch('/rest/v1/pp_state?select=value&key=eq.rev'),'rev'),rj=await rv.json();
+  const remote=(rj[0]&&rj[0].value&&rj[0].value.n)||0;
+  if(remote>sy.rev&&sy.rev>0&&sig!==sy.sig===false)return; // someone else moved on and we have nothing new: do not overwrite
+  const n=Math.max(remote,sy.rev)+1,rowsOut=[{key:'work',value:JSON.parse(w)}];
+  if(sig!==sy.sig||sy.rev===0)for(const k of ['cfg','log','head']){const v=localStorage.getItem(LSMAP[k]);if(v)rowsOut.push({key:k,value:JSON.parse(v)});}
+  rowsOut.push({key:'rev',value:{n}});
+  await okr(await sbFetch('/rest/v1/pp_state?on_conflict=key',{method:'POST',headers:{'Content-Type':'application/json',Prefer:'resolution=merge-duplicates,return=minimal'},body:JSON.stringify(rowsOut)}),'state');
+  lastWork=w;jset(SYNCK,{rev:n,sig});
+}
+setInterval(()=>{if(signedIn()&&navigator.onLine!==false&&!cloud.busy)pushState(true).catch(()=>{});},15000);
+/* applied once at start-up, after the library has been loaded: put the screen back as the other laptop left it */
+async function applyWork(){
+  const w=jget(WK,null);if(!w)return;try{localStorage.removeItem(WK);}catch(e){}
+  try{
+    if(S.result||batchAny())return;
+    const fire=(id,v)=>{const e=$(id);if(v==null)return;e.value=v;e.dispatchEvent(new Event('change'));};
+    fire('psize',w.psize);fire('cw',w.cw);fire('ch',w.ch);fire('paper',w.paper);fire('copies',w.copies);
+    if(w.batchOn){
+      $('batchOn').checked=true;$('batchOn').dispatchEvent(new Event('change'));
+      fire('bEach',w.bEach);fire('bPeople',w.bPeople);
+      const B=S.batch;
+      if(B&&B.n===(+w.bPeople||B.n)){
+        B.libIds=Array(B.n).fill(null);
+        for(let i=0;i<B.n;i++){const id=(w.slots||[])[i];if(!id)continue;
+          const rec=await tx('readonly',s=>s.get(id));if(!rec)continue;
+          const bm=await createImageBitmap(rec.blob),cv=document.createElement('canvas');cv.width=bm.width;cv.height=bm.height;cv.getContext('2d').drawImage(bm,0,0);
+          B.slots[i]=cv;B.libIds[i]=id;B.ids[i]=rec.pid||'';}
+        B.cur=B.slots.findIndex(x=>!x);
+        S.lastTray='';updateCaptureBtn();updateSheet();enableOut(!!S.result);updatePrintBtn();renderTray();
+        note('Continued from the other laptop: '+B.slots.filter(Boolean).length+' of '+B.n+' photos are back in the batch.',false);
+      }
+    }else note('Continued from the other laptop.',false);
+  }catch(e){}
+}
+setTimeout(applyWork,1200);
+/* batch slots remember which library photo they came from */
+{const _a2=acceptSlot;acceptSlot=function(){const B=S.batch;if(B&&S.result){if(!B.libIds)B.libIds=Array(B.n).fill(null);if($('libAuto').checked){saveCurrent(true);B.libIds[B.cur]=S.libId||null;}}return _a2();};
+ const _cb=closeBatch;closeBatch=function(){const B=S.batch;if(B&&B.libIds)B.libIds=B.libIds.filter((_,i)=>B.slots[i]);_cb();};}
+
 const CFGK_='pps_cfg_v1',LOGK_='pps_log_v1',HEADK_='pps_head_v1';
-function cloudUI(){const el=document.getElementById('lCloud');if(el)el.innerHTML=cloudHtml();wireCloud();}
+function cloudUI(){
+  const el=document.getElementById('lCloud');if(el)el.innerHTML=cloudHtml();wireCloud();
+  const c=$('chipCloud');if(!c)return;const ss=jget(SK,null);
+  c.textContent=!ss?'Cloud: sign in':cloud.busy?'Cloud: syncing…':/problem|Offline/.test(cloud.status||'')?'Cloud: offline (saved here)':'Cloud: synced ✓';
+  c.style.borderColor=!ss?'':/problem|Offline/.test(cloud.status||'')?'#a33':'#2e7d4f';c.title=(ss?ss.email+' · ':'')+(cloud.status||'Sign in to keep your work in the cloud and continue on any laptop');
+}
 function cloudHtml(){
   const ss=jget(SK,null),pend=jget(DK,[]).length;
   return ss?`<b>Cloud:</b> ${esc(ss.email)} · ${esc(cloud.status||'signed in')}${pend?` (${pend} deletion(s) waiting)`:''} <button class="btn" id="cSync">Sync now</button> <button class="btn" id="cOut">Sign out</button>`
-    :`<b>Cloud:</b> not signed in (photos are only on this laptop) <button class="btn pri" id="cIn">Sign in…</button>`;
+    :`<b>Cloud:</b> not signed in (work is only on this laptop) <button class="btn pri" id="cIn">Sign in…</button>`;
+}
+async function cloudSignIn(){
+  const r=await ask('Cloud sign-in','<p>Sign in with the studio login. Your photos, settings, sales record and the batch you are working on will follow you to any laptop.</p><input type="email" id="ce" placeholder="Email" style="width:100%;margin-bottom:8px"><input type="password" id="cp" placeholder="Password" style="width:100%">',
+    [{l:'Cancel'},{l:'Sign in',cls:'pri',fn:b=>{const e=b.querySelector('#ce').value.trim(),p=b.querySelector('#cp').value;if(!e||!p)return false;return {e,p};}}]);
+  if(!r||!r.e)return;
+  try{await sbSignIn(r.e,r.p);cloud.status='';cloudUI();cloudSync();}catch(e){alert(e.message);}
 }
 function wireCloud(){
   const g=id=>document.getElementById(id);
   if(g('cSync'))g('cSync').onclick=()=>cloudSync();
   if(g('cOut'))g('cOut').onclick=()=>{localStorage.removeItem(SK);cloud.status='';cloudUI();};
-  if(g('cIn'))g('cIn').onclick=async()=>{
-    const r=await ask('Cloud sign-in','<p>Sign in with the studio login to keep photos safe online and open them on any laptop.</p><input type="email" id="ce" placeholder="Email" style="width:100%;margin-bottom:8px"><input type="password" id="cp" placeholder="Password" style="width:100%"><p id="cerr" class="bad"></p>',
-      [{l:'Cancel'},{l:'Sign in',cls:'pri',fn:b=>{const e=b.querySelector('#ce').value.trim(),p=b.querySelector('#cp').value;if(!e||!p)return false;return {e,p};}}]);
-    if(!r||!r.e)return;
-    try{await sbSignIn(r.e,r.p);cloud.status='';cloudSync();}catch(e){alert(e.message);}
-  };
+  if(g('cIn'))g('cIn').onclick=cloudSignIn;
 }
+if($('chipCloud'))$('chipCloud').onclick=()=>{if(!signedIn())cloudSignIn();else cloudSync();};
+setTimeout(cloudUI,100);
 addEventListener('online',()=>cloudSync());
 setInterval(()=>{if(signedIn())cloudSync();},120000);
 setTimeout(()=>cloudSync(),3000);
