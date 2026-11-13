@@ -1496,7 +1496,7 @@ const _eo=enableOut;enableOut=function(on){_eo(on);$('btnLibSave').disabled=!on;
 refreshCount();
 
 /* ---- cloud sync (Supabase). Local library stays the working copy; this copies it up/down whenever there is internet. */
-const SB_URL='https://kqwqbohoeltlbwcopeug.supabase.co',SB_KEY='sb_publishable_T6oCd3aRO0OPheQXEkmvRA_nvIhEPcv',BUCKET='passport-photos',RETAIN_DAYS=30,SK='pps_sb',DK='pps_cdel';
+const SB_URL='https://uhjqhclfjqjbnaqqeutt.supabase.co',SB_KEY='sb_publishable_Qdy6DDmex9k62up4G-PoOw_HJox3e6p',BUCKET='passport-photos',RETAIN_DAYS=30,SK='pps_sb',DK='pps_cdel';
 const jget=(k,d)=>{try{const v=localStorage.getItem(k);return v?JSON.parse(v):d;}catch(e){return d;}},jset=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v));}catch(e){}};
 const cloud={status:'',busy:false};
 const signedIn=()=>!!jget(SK,null);
